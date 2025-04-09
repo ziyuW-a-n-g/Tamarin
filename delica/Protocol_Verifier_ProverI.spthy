@@ -1,0 +1,179 @@
+theory Verifiers_and_Provers
+begin
+
+builtins: asymmetric-encryption, signing
+functions:
+  
+  hash/4, 
+  hash2/2
+/*
+   Protocol between Verifier and Prover
+ */
+    
+
+// Public key infrastructure
+rule Proveregister_pk:
+  [ Fr(~ltkA) ]
+  --[Register($A, ~ltkA)]->
+  [ !Ltk($A, ~ltkA), !Pk($A, pk(~ltkA)), Out(pk(~ltkA)) ]
+
+rule Provereveal_ltk:
+  [ !Ltk(A, ltkA) ] --[ Revltk(A)    ]-> [ Out(ltkA) ]
+
+rule Generate_shared_key:
+[Fr(~k),
+!Pk($Verifier, pkVerifier),
+!Pk($Prover, pkProver)
+]
+--[Generatekey(pkVerifier,pkProver,~k)]->
+[!Ltksys($Verifier,$Prover,pkVerifier,pkProver,~k)]
+
+rule Reveal_k:
+      [!Ltksys($Verifier,$Prover,pkVerifier,pkProver,k)]
+        --[Revk($Verifier,$Prover)]->
+      [Out(k)]
+
+rule Verifier_1:
+  let m1 = <~time_I,~pid,sign(<~time_I,~pid>,ltk_Verifier),sign(~time_I,ltk_Verifier)>
+  in
+    [ Fr(~time_I),
+    Fr(~pid),
+    !Ltk($Verifier, ltk_Verifier),
+     !Pk($Prover, pkProver)
+    ]
+  --[ 
+  Step1(),
+  Running($Verifier, $Prover, <'param1',~pid,~time_I>)
+    ]->
+    [ Out( m1 ),
+      St_Verifier_1($Verifier, $Prover, ~time_I,~pid)
+    ]
+
+rule Prover_1:
+  let m1 = <~time_I,~pid,s1,s2>
+      Ti = hash2(~Ni,~time_I)
+      m2 = <~repi,Ti,hash(~k,~repi,Ti,~pid),sign(Ti,ltk_Prover)>
+  in
+    [ !Ltk($Prover, ltk_Prover),
+      In( m1 ),
+      !Ltksys($Verifier,$Prover,pkVerifier,pkProver,~k),
+      Fr(~repi),
+      Fr(~Ni)
+    ]
+  --[ Step2(),
+      Eq(verify(s1,<~time_I,~pid>,pkVerifier),true),
+      Eq(verify(s2,~time_I,pkVerifier),true),
+      Commit($Prover, $Verifier, <'param1',~time_I>),
+      Running($Prover, $Verifier, <'Ti',Ti>),
+      Running($Prover, $Verifier, <'pidi',~pid>),
+       Running($Prover, $Verifier, <'repi',~repi>)
+    ]->
+    [ Out( m2 ),
+      St_Prover_1($Prover, $Verifier, ~time_I, ~pid, ~Ni, ~repi)
+    ]
+
+rule Verifier_2:
+  let m2 = <~repi,Ti,hash(~k,~repi,Ti,~pid),s3>
+  in
+    [ St_Verifier_1($Verifier, $Prover, ~time_I,~pid),
+      In( m2 ),
+    !Ltksys($Verifier,$Prover,pkVerifier,pkProver,~k)
+    ]
+  --[ Step3(),
+      Eq(verify(s3,Ti,pkProver),true),
+      Commit ($Verifier, $Prover, <'Ti',Ti>),
+      Commit ($Verifier, $Prover, <'pidi',~pid>),
+      Commit ($Verifier, $Prover, <'repi',~repi>) 
+    ]->
+    [ ]
+
+
+restriction Equality:
+"All x y #i. Eq(x,y) @i ==> x = y"
+
+restriction register_once:
+  " All ltk1 ltk2 A #i #j. Register(A, ltk1)@i & Register(A, ltk2)@j ==> (#i = #j & ltk1 = ltk2)"
+
+restriction Generatekey_two_different_party:
+  " All pkVerifier pkProver k #i. Generatekey(pkVerifier,pkProver,k)@i  ==> not (pkVerifier=pkProver)"
+restriction Generatekey_once:
+  " All pkVerifier pkProver k1 k2 #i #j. Generatekey(pkVerifier,pkProver,k1)@i  & Generatekey(pkVerifier,pkProver,k2)@j==> (#i = #j & k1 = k2)"
+
+lemma executability:
+  exists-trace
+  " Ex #i #j #k. Step3()@i 
+  & Step2()@j 
+  & Step1()@k
+    & #k < #j  
+    & #j < #i 
+    & not (Ex X  #r. Revltk(X)@r)
+     & not (Ex Verifier  Prover  #r. Revk(Verifier,Prover)@r)
+    "
+
+lemma Aliveness_Verifier_ProverI:
+  "
+      All Verifier Prover Ti  #i.
+        Commit(Verifier, Prover, <'Ti',Ti>) @ i
+      ==>
+          (Ex Verifier1 t1  #j. Running(Prover, Verifier1, <'Ti',t1>) @ j & j < i
+          )
+        | (Ex #r. Revltk(Prover)  @ r)
+        |  (Ex Verifier  Prover  #r. Revk(Verifier,Prover)@r)
+  "
+lemma Weak_agree_Verifier_ProverI:
+  "
+      All Verifier Prover Ti  #i.
+        Commit(Verifier, Prover, <'Ti',Ti>) @ i
+      ==>
+          (Ex t1  #j. Running(Prover, Verifier, <'Ti',t1>) @ j & j < i
+          )
+        | (Ex #r. Revltk(Prover)  @ r)
+        |  (Ex Verifier  Prover  #r. Revk(Verifier,Prover)@r)
+  "
+lemma Noninjective_agree_Ti_Verifier_ProverI:
+  "
+      All Verifier Prover Ti  #i.
+        Commit(Verifier, Prover, <'Ti',Ti>) @ i
+      ==>
+          (Ex #j. Running(Prover, Verifier, <'Ti',Ti>) @ j & j < i
+          )
+        | (Ex #r. Revltk(Prover)  @ r)
+        |  (Ex Verifier  Prover  #r. Revk(Verifier,Prover)@r)
+  "
+
+
+lemma Noninjective_agree_repi_Verifier_ProverI:
+  "
+      All Verifier Prover  repi #i.
+        Commit(Verifier, Prover, <'repi',repi>) @ i
+      ==>
+          (Ex #j. Running(Prover, Verifier, <'repi',repi>) @ j & j < i
+          )
+        | (Ex #r. Revltk(Prover)  @ r)
+        |  (Ex Verifier  Prover  #r. Revk(Verifier,Prover)@r)
+  "
+lemma Noninjective_agree_pidi_Verifier_ProverI:
+  "
+      All Verifier Prover  pid #i.
+        Commit(Verifier, Prover, <'pidi',pid>) @ i
+      ==>
+          (Ex #j. Running(Prover, Verifier, <'pidi',pid>) @ j & j < i
+          )
+        | (Ex #r. Revltk(Prover)  @ r)
+        |  (Ex Verifier  Prover  #r. Revk(Verifier,Prover)@r)
+  "
+
+lemma Injective_agree_Ti_Verifier_ProverI:
+  "
+      All Verifier Prover Ti  #i.
+        Commit(Verifier, Prover, <'Ti',Ti>) @ i
+      ==>
+          (Ex #j. Running(Prover, Verifier, <'Ti',Ti>) @ j & j < i
+          & not (Ex Verifier2 Prover2 #i2. Commit(Verifier2,Prover2,<'Ti', Ti>)@i2
+                            & not (#i2 = #i))
+          )
+        | (Ex #r. Revltk(Prover)  @ r)
+        |  (Ex Verifier  Prover  #r. Revk(Verifier,Prover)@r)
+  "
+
+end
